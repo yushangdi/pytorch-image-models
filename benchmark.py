@@ -23,6 +23,9 @@ from timm.optim import create_optimizer_v2
 from timm.data import resolve_data_config
 from timm.utils import setup_default_logging, set_jit_fuser
 
+if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO') == '1':
+    import torchdynamo
+    from torchdynamo.optimizations.training import aot_autograd_speedup_strategy
 
 has_apex = False
 try:
@@ -487,7 +490,11 @@ def _try_run(model_name, bench_fn, initial_batch_size, bench_kwargs):
         torch.cuda.empty_cache()
         try:
             bench = bench_fn(model_name=model_name, batch_size=batch_size, **bench_kwargs)
-            results = bench.run()
+            if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO'):
+                with torchdynamo.optimize(aot_autograd_speedup_strategy):
+                    results = bench.run()
+            else:
+                results = bench.run()
             return results
         except RuntimeError as e:
             error_str = str(e)
