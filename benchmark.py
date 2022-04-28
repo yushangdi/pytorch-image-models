@@ -495,6 +495,8 @@ def _try_run(model_name, bench_fn, initial_batch_size, bench_kwargs):
                 _logger.error(f'{model_name} not supported in channels_last, skipping.')
                 break
             _logger.warning(f'"{error_str}" while running benchmark. Reducing batch size to {batch_size} for retry.')
+            if os.getenv('TIMM_BENCHMARK_RAISE_IF_FAILED'):
+                raise
         batch_size = decay_batch_exp(batch_size)
     results['error'] = error_str
     return results
