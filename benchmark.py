@@ -58,8 +58,9 @@ except ImportError as e:
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger('validate')
 
-import traceback
 if os.getenv('TIMM_BENCHMARK_NVFUSER_SKIP_NODE_KINDS'):
+    import traceback
+    import sys
     node_kinds = os.getenv('TIMM_BENCHMARK_NVFUSER_SKIP_NODE_KINDS').split(';')
     for node_kind in node_kinds:
         is_successful = True
@@ -69,7 +70,7 @@ if os.getenv('TIMM_BENCHMARK_NVFUSER_SKIP_NODE_KINDS'):
             is_successful = False
             traceback.print_exc()
         finally:
-            print(f'{node_kind = }, {is_successful = }')
+            print(f'{node_kind = }, {is_successful = }', file=sys.stderr)
 
 
 parser = argparse.ArgumentParser(description='PyTorch Benchmark')
