@@ -58,7 +58,7 @@ except ImportError as e:
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger('validate')
 
-if 'TIMM_BENCHMARK_NVFUSER_SKIP_NODE_KINDS' in os.environ:
+if os.getenv('TIMM_BENCHMARK_NVFUSER_SKIP_NODE_KINDS'):
     node_kinds = os.getenv('TIMM_BENCHMARK_NVFUSER_SKIP_NODE_KINDS').split(';')
     for node_kind in node_kinds:
         torch._C._jit_set_nvfuser_skip_node_kind(node_kind, True)
