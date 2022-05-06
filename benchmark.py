@@ -55,6 +55,7 @@ except ImportError as e:
     has_fvcore_profiling = False
 
 
+torch.set_float32_matmul_precision('high')
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger('validate')
 
