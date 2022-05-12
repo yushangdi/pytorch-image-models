@@ -266,11 +266,11 @@ class InferenceBenchmarkRunner(BenchmarkRunner):
         self.model.eval()
 
     def run(self):
-        def _step():
+        def _step(sync=True):
             t_step_start = self.time_fn()
             with self.amp_autocast():
                 output = self.model(self.example_inputs)
-            t_step_end = self.time_fn(True)
+            t_step_end = self.time_fn(sync)
             return t_step_end - t_step_start
 
         _logger.info(
@@ -282,13 +282,29 @@ class InferenceBenchmarkRunner(BenchmarkRunner):
 
             for _ in range(self.num_warm_iter):
                 _step()
+            
+            if os.getenv('TIMM_BENCHMARK_ENABLE_CUDAGRAPH') == '1':
+                s = torch.cuda.Stream()
+                s.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(s):
+                    for _ in range(3):
+                        _step(sync=False)
+                torch.cuda.current_stream().wait_stream(s)
+
+                g = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(g):
+                    _step(sync=False)
 
             total_step = 0.
             num_samples = 0
-            t_run_start = self.time_fn()
+            t_run_start = self.time_fn(True)
             for i in range(self.num_bench_iter):
-                delta_fwd = _step()
-                total_step += delta_fwd
+                if os.getenv('TIMM_BENCHMARK_ENABLE_CUDAGRAPH') == '1':
+                    g.replay()
+                    total_step = self.time_fn(True) - t_run_start
+                else:
+                    delta_fwd = _step()
+                    total_step += delta_fwd
                 num_samples += self.batch_size
                 num_steps = i + 1
                 if num_steps % self.log_freq == 0:
@@ -350,7 +366,7 @@ class TrainBenchmarkRunner(BenchmarkRunner):
             (batch_size,) + self.target_shape, device=self.device, dtype=torch.long).random_(self.num_classes)
 
     def run(self):
-        def _step(detail=False):
+        def _step(detail=False, sync=True):
             self.optimizer.zero_grad()  # can this be ignored?
             t_start = self.time_fn()
             t_fwd_end = t_start
@@ -366,7 +382,7 @@ class TrainBenchmarkRunner(BenchmarkRunner):
                 if detail:
                     t_bwd_end = self.time_fn(True)
             self.optimizer.step()
-            t_end = self.time_fn(True)
+            t_end = self.time_fn(sync)
             if detail:
                 delta_fwd = t_fwd_end - t_start
                 delta_bwd = t_bwd_end - t_fwd_end
@@ -384,8 +400,22 @@ class TrainBenchmarkRunner(BenchmarkRunner):
 
         for _ in range(self.num_warm_iter):
             _step()
+        
+        if os.getenv('TIMM_BENCHMARK_ENABLE_CUDAGRAPH') == '1':
+            assert self.detail is False, \
+                "mode `--detail` is not supported with CUDA Graph in training benchmark as it introduces many CUDA synchronizations"
+            s = torch.cuda.Stream()
+            s.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(s):
+                for _ in range(3):
+                    _step(sync=False)
+            torch.cuda.current_stream().wait_stream(s)
 
-        t_run_start = self.time_fn()
+            g = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g):
+                _step(sync=False)
+
+        t_run_start = self.time_fn(True)
         if self.detail:
             total_fwd = 0.
             total_bwd = 0.
@@ -423,9 +453,13 @@ class TrainBenchmarkRunner(BenchmarkRunner):
             total_step = 0.
             num_samples = 0
             for i in range(self.num_bench_iter):
-                delta_step = _step(False)
+                if os.getenv('TIMM_BENCHMARK_ENABLE_CUDAGRAPH') == '1':
+                    g.replay()
+                    total_step = self.time_fn(True) - t_run_start
+                else:
+                    delta_step = _step(False)
+                    total_step += delta_step
                 num_samples += self.batch_size
-                total_step += delta_step
                 num_steps = (i + 1)
                 if num_steps % self.log_freq == 0:
                     _logger.info(
