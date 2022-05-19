@@ -27,6 +27,9 @@ if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO') == '1':
     import torchdynamo
     from torchdynamo.optimizations.training import aot_autograd_speedup_strategy
 
+if os.getenv('TIMM_BENCHMARK_ENABLE_AOT_AUTOGRAD') == '1':
+    from functorch.compile import memory_efficient_fusion
+
 has_apex = False
 try:
     from apex import amp
@@ -238,6 +241,8 @@ class BenchmarkRunner:
         if torchscript:
             self.model = torch.jit.script(self.model)
             self.scripted = True
+        if os.getenv('TIMM_BENCHMARK_ENABLE_AOT_AUTOGRAD') == '1':
+            self.model = memory_efficient_fusion(self.model)
 
         data_config = resolve_data_config(kwargs, model=self.model, use_test_size=not use_train_size)
         self.input_size = data_config['input_size']
@@ -539,7 +544,7 @@ def _try_run(model_name, bench_fn, initial_batch_size, bench_kwargs):
         torch.cuda.empty_cache()
         try:
             bench = bench_fn(model_name=model_name, batch_size=batch_size, **bench_kwargs)
-            if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO'):
+            if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO') == '1':
                 with torchdynamo.optimize(aot_autograd_speedup_strategy):
                     results = bench.run()
             else:
@@ -551,7 +556,7 @@ def _try_run(model_name, bench_fn, initial_batch_size, bench_kwargs):
                 _logger.error(f'{model_name} not supported in channels_last, skipping.')
                 break
             _logger.warning(f'"{error_str}" while running benchmark. Reducing batch size to {batch_size} for retry.')
-            if os.getenv('TIMM_BENCHMARK_RAISE_IF_FAILED'):
+            if os.getenv('TIMM_BENCHMARK_RAISE_IF_FAILED') == '1':
                 raise
         batch_size = decay_batch_exp(batch_size)
     results['error'] = error_str
