@@ -592,7 +592,7 @@ def _try_run(model_name, bench_fn, bench_kwargs, initial_batch_size, no_batch_si
                 break
             _logger.error(f'"{error_str}" while running benchmark.')
             if no_batch_size_retry:
-                break
+                raise
         batch_size = decay_batch_exp(batch_size)
         _logger.warning(f'Reducing batch size to {batch_size} for retry.')
     results['error'] = error_str
