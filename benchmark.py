@@ -9,6 +9,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import time
 from collections import OrderedDict
 from contextlib import suppress
@@ -658,6 +659,9 @@ def main():
     args = parser.parse_args()
     model_cfgs = []
     model_names = []
+
+    if os.getenv('TIMM_BENCHMARK_RAISE_IF_FAILED', '0') == '1':
+        args.no_retry = True
 
     if args.model_list:
         args.model = ''
