@@ -24,6 +24,19 @@ from timm.models import create_model, is_model, list_models
 from timm.optim import create_optimizer_v2
 from timm.utils import setup_default_logging, set_jit_fuser
 
+from functorch._src.compilers import get_save_fx_default_func
+import torchdynamo
+from shutil import rmtree
+from torchdynamo.utils import clone_inputs
+
+folder_name = "timm_graphs"
+torch.backends.cuda.matmul.allow_tf32 = True
+
+torch._C._jit_override_can_fuse_on_cpu(False)
+torch._C._jit_override_can_fuse_on_gpu(False)
+torch._C._jit_set_texpr_fuser_enabled(False)
+torch._C._jit_set_nvfuser_enabled(True)
+
 if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO') == '1':
     import torchdynamo
     from torchdynamo.optimizations.training import aot_autograd_speedup_strategy
@@ -90,7 +103,7 @@ parser = argparse.ArgumentParser(description='PyTorch Benchmark')
 parser.add_argument('--model-list', metavar='NAME', default='',
                     help='txt file based list of model names to benchmark')
 parser.add_argument('--bench', default='both', type=str,
-                    help="Benchmark mode. One of 'inference', 'train', 'both'. Defaults to 'both'")
+                    help="Benchmark mode. One of 'inference', 'train', 'both', 'dump. Defaults to 'both'")
 parser.add_argument('--detail', action='store_true', default=False,
                     help='Provide train fwd/bwd/opt breakdown detail if True. Defaults to False')
 parser.add_argument('--no-retry', action='store_true', default=False,
@@ -275,7 +288,7 @@ class BenchmarkRunner:
         self.example_inputs = None
         self.num_warm_iter = num_warm_iter
         self.num_bench_iter = num_bench_iter
-        self.log_freq = num_bench_iter // 5
+        self.log_freq = max(1, num_bench_iter // 5)
         if 'cuda' in self.device:
             self.time_fn = partial(cuda_timestamp, device=self.device)
         else:
@@ -562,6 +575,48 @@ class ProfileRunner(BenchmarkRunner):
 
         return results
 
+class DumpBenchmarkRunner(BenchmarkRunner):
+
+    def __init__(
+            self,
+            model_name,
+            device='cuda',
+            torchscript=False,
+            **kwargs
+    ):
+        super().__init__(model_name=model_name, device=device, torchscript=torchscript, **kwargs)
+        self.model.train()
+
+        self.loss = nn.CrossEntropyLoss().to(self.device)
+        self.target_shape = tuple()
+
+        self.grad_scaler = torch.cuda.amp.GradScaler()
+        self._init_input()
+
+        # get target shape
+        self.model.zero_grad(True)
+        with self.amp_autocast():
+            output = self.model(self.example_inputs)
+            if isinstance(output, tuple):
+                output = output[0]
+            self.target = self._gen_target(output.shape[0])
+
+        if kwargs.pop('grad_checkpointing', False):
+            self.model.set_grad_checkpointing()
+    
+    def _gen_target(self, batch_size):
+        return torch.empty(
+            (batch_size,) + self.target_shape, device=self.device, dtype=torch.long).random_(self.num_classes)
+
+    def run(self):
+        self.model.zero_grad(True)
+        with self.amp_autocast():
+            output = self.model(self.example_inputs)
+            if isinstance(output, tuple):
+                output = output[0]
+            self.loss(output, self.target).backward()
+        return {}
+
 
 def decay_batch_exp(batch_size, factor=0.5, divisor=16):
     out_batch_size = batch_size * factor
@@ -583,6 +638,14 @@ def _try_run(model_name, bench_fn, bench_kwargs, initial_batch_size, no_batch_si
             if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO') == '1':
                 with torchdynamo.optimize(aot_autograd_speedup_strategy):
                     results = bench.run()
+            elif os.getenv('TIMM_BENCHMARK_DUMPGRAPH') == '1':
+                save_fx_func = get_save_fx_default_func(model_name, folder_name, dump_example_input = False)
+                optimize_ctx = torchdynamo.optimize(
+                    save_fx_func
+                )
+                with torch.enable_grad():
+                    with optimize_ctx:
+                        results = bench.run()
             else:
                 results = bench.run()
             return results
@@ -624,6 +687,9 @@ def benchmark(args):
     elif args.bench == 'train':
         bench_fns = TrainBenchmarkRunner,
         prefixes = 'train',
+    elif args.bench == 'dump':
+        bench_fns = DumpBenchmarkRunner,
+        prefixes = 'dump'
     elif args.bench.startswith('profile'):
         # specific profiler used if included in bench mode string, otherwise default to deepspeed, fallback to fvcore
         if 'deepspeed' in args.bench:
