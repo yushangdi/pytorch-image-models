@@ -30,6 +30,7 @@ from shutil import rmtree
 from torchdynamo.utils import clone_inputs
 
 folder_name = "timm_graphs"
+TIMM_BENCHMARK_DUMPGRAPH=0
 torch.backends.cuda.matmul.allow_tf32 = True
 
 torch._C._jit_override_can_fuse_on_cpu(False)
@@ -638,7 +639,7 @@ def _try_run(model_name, bench_fn, bench_kwargs, initial_batch_size, no_batch_si
             if os.getenv('TIMM_BENCHMARK_ENABLE_TORCHDYNAMO') == '1':
                 with torchdynamo.optimize(aot_autograd_speedup_strategy):
                     results = bench.run()
-            elif os.getenv('TIMM_BENCHMARK_DUMPGRAPH') == '1':
+            elif TIMM_BENCHMARK_DUMPGRAPH == 1:
                 save_fx_func = get_save_fx_default_func(model_name, folder_name, dump_example_input = False)
                 optimize_ctx = torchdynamo.optimize(
                     save_fx_func
@@ -690,6 +691,8 @@ def benchmark(args):
     elif args.bench == 'dump':
         bench_fns = DumpBenchmarkRunner,
         prefixes = 'dump'
+        global TIMM_BENCHMARK_DUMPGRAPH
+        TIMM_BENCHMARK_DUMPGRAPH=1
     elif args.bench.startswith('profile'):
         # specific profiler used if included in bench mode string, otherwise default to deepspeed, fallback to fvcore
         if 'deepspeed' in args.bench:
