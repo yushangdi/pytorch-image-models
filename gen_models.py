@@ -1,17 +1,8 @@
 import os
 import glob
-import argparse
-import collections
-import copy
-import csv
-import functools
-import gc
-import io
-import itertools
 import logging
 import os
 import subprocess
-import sys
 from shutil import rmtree
 import shlex
 
@@ -38,14 +29,36 @@ lm = list(models)
 lm.sort()
 # print(lm)
 
+batch_size_dict = {
+    "dpn107": 64,
+    "gluon_senet154": 64,
+    "gluon_xception65": 64,
+    "ig_resnext101_32x16d": 64,
+    "legacy_senet154": 64,
+    "nasnetalarge": 64,
+    "pnasnet5large": 64,
+    "resnetv2_101x1_bitm": 64,
+    "seresnet152d": 64,
+    "ssl_resnext101_32x16d": 64,
+
+}
+
+SKIP = {
+    "tresnet_l"
+}
 
 # with open('_models.txt', 'w') as f:
 #     for model in lm:
 #         f.write(model + '\n')
 for name in lm:
     current_name = name
+    if name in SKIP:
+        continue
     try:
-        cmd = shlex.split(f"python benchmark.py --fuser nvfuser --bench dump --model={name} -b 128")
+        batch_size = batch_size_dict.get(name, 128)
+        cmd = f"python benchmark.py --fuser nvfuser --bench dump --model={name} -b {batch_size}"
+        print(cmd)
+        cmd = shlex.split(cmd)
         subprocess.check_call(cmd)
         print(name, "success")
     except subprocess.SubprocessError:
