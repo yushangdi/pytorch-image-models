@@ -24,7 +24,7 @@ from timm.models import create_model, is_model, list_models
 from timm.optim import create_optimizer_v2
 from timm.utils import setup_default_logging, set_jit_fuser
 
-from functorch._src.compilers import get_save_fx_default_func
+from functorch._src.compilers import graph_dumper_aot
 import torchdynamo
 from shutil import rmtree
 from torchdynamo.utils import clone_inputs
@@ -640,7 +640,7 @@ def _try_run(model_name, bench_fn, bench_kwargs, initial_batch_size, no_batch_si
                 with torchdynamo.optimize(aot_autograd_speedup_strategy):
                     results = bench.run()
             elif TIMM_BENCHMARK_DUMPGRAPH == 1:
-                save_fx_func = get_save_fx_default_func(model_name, folder_name, dump_example_input = False)
+                save_fx_func = graph_dumper_aot(model_name, folder_name, dump_example_input = False)
                 optimize_ctx = torchdynamo.optimize(
                     save_fx_func
                 )
